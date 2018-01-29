@@ -58,6 +58,7 @@ class Snapshot:
         density(quantity=None)
         MF(nbins='auto')
         trh()
+        get_local_density(neighbors=6, mask=False)
 
         # DC()
         # rd()
@@ -80,11 +81,9 @@ class Snapshot:
         self._snap = snap.copy()
         self.project_flag = project
         # check user's features
-        if not self._check_features('x', 'y'):
-            raise ValueError("2 columns required: x, y")
+        self._check_features('Initialization', 'x', 'y')
         if not self.project_flag:
-            if not self._check_features('z'):
-                raise ValueError("3 columns required: x, y, z")
+            self._check_features('Initialization', 'z')
         self.sort_flag = sort
         self._center = center
 
@@ -188,9 +187,9 @@ class Snapshot:
         """
         Return center of mass.
         """
-        if not self._check_features('m'):
-            raise ValueError('CoM: missing m feature')
-        t = self._snap
+        self._check_features('Center of Mass', 'm')
+
+        t = self.get_selection()
         if self.project_flag:
             com = tuple(np.array([
                np.dot(t['x'],t['m']),
@@ -209,11 +208,11 @@ class Snapshot:
         Return an array where the i-th element is the radius that contains
         a fraction percs[i] of the global mass.
         """
-        if not self._check_features('r', 'm'):
-            raise ValueError('Masses must be provided and the cluster must \
-                be radially sorted ')
+        self._check_features('Lagrangian radii', 'r', 'm')
 
-        snap = self._snap[:][self._snap['mask']]
+        snap = self.get_selection()
+        snap['r'] = self.get_r(mask=True)
+        #snap = self._snap[:][self._snap['mask']]
         try:
             percs = tuple(percs) 
         except:
@@ -257,17 +256,14 @@ class Snapshot:
         """
         snap = self.get_selection()
         if los:
-            if not self._check_features('vz'):
-                raise ValueError('Velocity vz must be provided')
+            self._check_features('Velocity dispersion', 'vz')
             sig = np.sqrt(np.std(snap['vz'])**2.)
         elif self.project_flag:
-            if not self._check_features('vx', 'vy'):
-                raise ValueError('Velocities vx and vy must be provided')
+            self._check_features('Velocity dispersion', 'vx', 'vy')
             sig = np.sqrt(np.std(snap['vx'])**2. +
                 np.std(snap['vy'])**2.)
         else:
-            if not self._check_features('vx', 'vy', 'vz'):
-                raise ValueError('Velocities vx, vy and vz must be provided')
+            self._check_features('Velocity dispersion', 'vx', 'vy', 'vz')
             sig = np.sqrt(np.std(snap['vx'])**2. +
                 np.std(snap['vy'])**2. + np.std(snap['vz'])**2.)
 
@@ -278,12 +274,12 @@ class Snapshot:
         Return density of a specified quantity. Default is number 
         density.
         """
-        snap = self._snap[:][self._snap['mask']]
+        snap = self.get_selection()
+        snap['r'] = self.get_r(mask=True)
         if quantity is None:
             numerator = len(snap) 
         else:
-            if not self._check_features(quantity):
-                raise ValueError(quantity + 'must be provided')
+            self._check_features('Density', quantity)
             numerator = np.sum(snap[quantity])
 
         rad = self.get_r(mask=True)
@@ -301,8 +297,7 @@ class Snapshot:
         where m is the mass of the selected stars.
         """
         snap = self.get_selection()
-        if not self._check_features('m'):
-            raise ValueError('Mass function: missing m feature')
+        self._check_features('Mass function', 'm')
         return np.histogram(snap['m'], bins=nbins) 
 
     def trh(self):
@@ -312,6 +307,105 @@ class Snapshot:
         N = len(self.get_selection())
         rh = self.larg_r(50.)
         return 0.138 * N * rh**1.5 / np.log(0.11 * N)
+
+    def alpha(self, nbins=10, plot=False):
+        """
+        Return [alpha, dalpha], with alpha and dalpha respectively 
+        slope and error of the Mass Function with nbins mass bins with 
+        approximately the same numbe of stars.
+        Optionally plots the linear fit.
+        """
+        # get sorted cluster with radius
+        snap = get_selection()
+        N = len(snap)
+
+        # define variable mass bins by fixing the number of stars in the bin
+        # (see Maiz&Ubeda05)
+        stars_per_bin = N // nbins # minimum number of stars per bin
+        exceeding_stars = N % nbins # intial number of stars in excess
+        nbin = [] # list with len nbins:
+                  # each element gives the number of stars in a mass bin
+        for n in range(nbins): # for each mass bin...
+            if exceeding_stars > 0:
+                nbin.append(stars_per_bin + 1)
+                exceeding_stars = exceeding_stars - 1
+            else:
+                nbin.append(stars_per_bin) # leave the fixed number of stars
+        np.random.shuffle(nbin) # shuffle to avoid systematics
+
+        m_sort = np.sort(snap['m']) # sorted masses
+        xlist, ylist, yerrlist = [], [], []
+        for i in range(nbins):
+            # get masses in the bin
+            ms = m_sort[int(np.sum(nbin[:i])):int(np.sum(nbin[:i+1]))]
+            Ni = len(ms) # stars in bin
+            dmi = ms[-1] - ms[0] # bin width
+            yi = np.log10(Ni/dmi) # value of mass function
+            xi = np.log10(np.mean(ms)) # average mass in bin
+            wi = Ni * N / (N-Ni) / (np.log10(np.e))**2. # weights
+            si = 1. / np.sqrt(wi) # error of log10(Ni)
+            yi_err = yi * np.log(np.e) * si 
+            ylist.append(yi)
+            xlist.append(xi)
+            yerrlist.append(yi_err)
+        x, y, yerr  = np.array(xlist), np.array(ylist), np.array(yerrlist)
+
+        theta, theta_err = lregr(x, y, yerr, 
+            verbose=plot, plot=plot, labels=('log(mass)','log(dN/dm)'))
+        return theta[1], theta_err[1]
+
+    def get_local_density(self, neighbors=6, mask=False):
+        """
+        If present, return the local densities for the selected stars.
+        Otherwise, calculate (and then return) the local densities following
+        Casertano & Hut '85.
+
+        Arguments:
+        neighbors   int, 
+                    number of closest stars used to evaluate the local density
+
+        mask        bool,
+                    if False the calculation is performed on the entire 
+                    cluster, and not only on the subgroup of selected stars.
+        """
+        try:
+            if mask:
+                rho = self._snap[:][self._snap['mask']]['rho']
+            else:
+                rho = self._snap['rho']
+            return rho
+        except:
+            self._check_features('Local density', 'm')
+
+            if mask:
+                snap = self.get_selection()
+            else:
+                snap = self._snap
+            m, x, y, z = snap['m'], snap['x'], snap['y'], snap['z']
+
+            rho = np.ones(self.N) * np.nan
+            for i in range (len(snap)): #for each star 
+                # partially sort the mass array according 
+                # to the distances r to the i-th star...
+
+                # find distances to the i-th star
+                r = np.sqrt((x - x[i])**2. + (y - y[i])**2. + (z - z[i])**2.)
+                # find indeces that would sort the first neighbors of r 
+                so = np.argpartition(r, neighbors)
+                rs = r[so][:neighbors+1] # distances of the close neighbors
+                ms = m[so][:neighbors+1] # masses of the close neighbors
+
+                # finally, the local density
+                # note: the total mass at the numerator is calculated excluding 
+                # the masses of the i-th star and its neighbors-th closest star.
+                rho[i] = (np.sum(ms[:-1]) - m[i]) / \
+                    (4./3 * np.pi * rs[neighbors]**3)
+        
+            self._snap['rho'] = np.array(rho)
+            if mask:
+                return self._snap[:][self._snap['mask']]['rho']
+            else:
+                return self._snap['rho']
 
     def _rad_sort(self):
         """
@@ -367,18 +461,18 @@ class Snapshot:
         if len(mask) > 1:
             return np.logical_and.reduce(mask)
 
-    def _check_features(self, *args):
+    def _check_features(self, function_name='', *args):
         """
-        Return True if all the features specified by args are column names of
-        the cluster
+        Raise a ValueError if one of the features specified by args are 
+        not column names of the cluster
         """
+        missing_features = []
         for feature in args:
             if feature not in self._snap.colnames:
-                return False
-        return True
-
-
-
+                missing_features.append(feature)
+        if len(missing_features) > 0:
+            raise ValueError(function_name + ': provide ' 
+                + str(missing_features))
 
     # def DC(self):
     #     """
@@ -444,52 +538,5 @@ class Snapshot:
     #     num = np.sum(radius * t['rho'] * t['m'])
     #     den = np.sum(t['rho'] * t['m'])
     #     return num / den
-
-    # def alpha(self, nbins=10, plot=False):
-    #     """
-    #         Returns [alpha, dalpha], with
-    #         alpha and dalpha slope and error of the Mass Function with 
-    #         nbins mass bins with approximately the same numbe of stars.
-    #         Optionally plots the linear fit.
-    #     """
-    #     # get sorted snap and radius
-    #     snap = self.selection
-    #     N = len(snap)
-
-    #     # define variable mass bins by fixing the number of stars in the bin
-    #     # (see Maiz&Ubeda05)
-    #     stars_per_bin = N // nbins # minimum number of stars per bin
-    #     exceeding_stars = N % nbins # intial number of stars in excess
-    #     nbin = [] # vector with len nbins:
-    #               # each element gives the number of stars in a mass bin
-    #     for n in range(nbins): # for each mass bin...
-    #         if exceeding_stars > 0:
-    #             nbin.append(stars_per_bin + 1)
-    #             exceeding_stars = exceeding_stars - 1
-    #         else:
-    #             nbin.append(stars_per_bin) # leave the fixed number of stars
-    #     np.random.shuffle(nbin) # shuffle to avoid systematics
-        
-    #     m_sort = np.sort(snap['m'].values) # sort according to the mass
-    #     x, y, yerr = [], [], []
-    #     for i in range(nbins):
-    #         # get masses in the bin
-    #         ms = m_sort[int(np.sum(nbin[:i])):int(np.sum(nbin[:i+1]))]
-    #         Ni = len(ms) # stars in bin
-    #         dmi = ms[-1] - ms[0] # bin width
-    #         yi = np.log10(Ni/dmi) # value of mass function
-    #         xi = np.log10(np.mean(ms)) # average mass in bin
-    #         wi = Ni * N / (N-Ni) / (np.log10(np.e))**2.
-    #         si = 1. / np.sqrt(wi) # error of log10(Ni)
-    #         yi_err = yi * np.log(np.e) * si 
-    #         y.append(yi)
-    #         x.append(xi)
-    #         yerr.append(yi_err)
-    #     x, y, yerr  = np.array(x), np.array(y), np.array(yerr)
-
-    #     theta, theta_err = LinRegr(x, y, yerr, 
-    #         verbose=plot, plot=plot, labels=('log(mass)','log(dN/dm)'))
-    #     return theta[1], theta_err[1]
-
     # """
 

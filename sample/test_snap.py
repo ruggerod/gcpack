@@ -194,5 +194,39 @@ class TestSnap():
 		# half-mass radius of a N=1K better be less than 10%
 		assert abs((s.lagr_r(50.) - rh)/rh) < 0.1
 
+	def test_local_density(self):
+		# produce a dummy cluster with 10 stars (separated by 1 pc)
+		# with equal masses (=1 Msun)
+		tab = Table()
+		tab['x'] = np.arange(0., 10., 1) # all the stars along x
+		tab['y'] = np.zeros_like(tab['x']) * 0.
+		tab['z'] = np.zeros_like(tab['x']) * 0.
+		tab['m'] = np.ones_like(tab['x']) * 1. # m = 1 for each star
+
+		# check density of central star
+		s = gcpack.Snapshot(tab)
+		rho = s.get_local_density()
+		assert(rho[0] == 5. / (4./3 * np.pi * tab['x'][6]**3.))
+
+		# check masked density
+		# select the 7 stars with x < 7.
+		s.select_stars(x=(0.,7.))
+		assert(len(s.get_local_density(mask=True)) == 7)
+
+
+		# add rho to the table
+		tab['rho'] = rho
+		# create new cluster
+		s = gcpack.Snapshot(tab)
+		# check if, when present, the local density is returned without 
+		# further calculations
+		assert np.all(s.get_local_density() == rho)
+
+
+
+
+
+
+
 
 
