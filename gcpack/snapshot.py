@@ -1,78 +1,112 @@
 import numpy as np
 from astropy.table import Table
+from copy import deepcopy
+import gcpack as gcp
 
-class Snapshot(Table):
-    """ Snapshot
-
-    Class that inherits from astropy.table.Table and 
-    represents a snapshot of N stars with M features.
+class Snapshot(object):
+    """ 
+    Creates a snapshot of N stars with M features by means of an astropy Table.
 
     Parameters
-        sort:       bool, 
-                    specifies if the snapshot has to be sorted by the distance 
-                    to the center; default is False.
+    ----------
+        data : numpy ndarray, dict, list, Table, or table-like object, optional
+            Data to initialize table (see options below). 
+        names : list, optional
+            Specify column names (see options below).   
+        dtype : list, optional
+            Specify column data types.     
+        project : bool, optional
+            Project cluster along z axis 
+        center : list, optional
+            Stellar system center
 
-        center:     tuple,
-                    specifies the coordinates (x, y, z) of the center of the 
-                    system; default is (0, 0, 0)
+    User's columns
+    --------------
+        x, y, z : required, position as separate columns
+        vx, vy, vz : optional, velocity as separate columns
+        m : optional, mass
+        id : optional, star id
+        ks : optional, stellar type
+        l : optional, luminosity
+        rho : optional, local density
+        mu : optional, local surface brightness
 
-        **kwargs:   keywords used by select_stars at initialization
+    Attributes
+    ----------
+        N : int, 
+            Total number of stars in the cluster
+        original : Table, 
+            Snapshot provided at initialization
+        rad_sorted : Table, 
+            Snapshot provided at initialization, but radially sorted
+        _data : Table,
+            Represents the Snapshot including extra derived columns
+        _data['_XXX'] : astropy.table.Column,
+            Represents a derived column (see below)
+
+    Derived columns
+    ---------------
+        _x, _y, _z : derived from __init__, 
+            position from the center (e.g. _x = x - x_center).
+        _r : derived from __init__, 
+            distance from the center (projected or intrinsic)
+        _mask : derived from __init__, 
+            boolean mask used to filter the snapshot
+        _rho : derived from add_local_density,
+            local density
     
-    Attributes:
-        sort_flag:     bool, if True the snapshot is radially sorted.
+    Methods
+    -------
+        filter(overwrite=True, by_range=None, **kwargs)
+        add_local_density(n_neighbors=6)
 
-    Possible snap columns keywords (in brackets is optional):
-        x,y,(z):            position (separate columns)
-        (vx), (vy), (vz):   velocity (separate columns)
-        (m):                mass
-        (id):               simulation id
-        (ks):               stellar type
-        (l):                luminosity
-        (rho):              local density
-        (mu):               local surface brightness
-        ...
-        
-    Methods:
-        mask(overwrite=True, by_range=True, **kwargs)
-        get_selection()
-        reset_center()
-        get_center()
-        get_r(mask=False)
-        com()
-        larg_r()
-        sigma(los=False)
-        density(quantity=None)
-        MF(nbins='auto')
-        trh()
-        get_local_density(neighbors=6, mask=False)
-
-        # DC()
-        # rd()
-        # info()
-        # alpha(nbins=10, plot=False)
-        
-    ----------------------------------------------------------------
-    
-    Private attributes:
-        _center:    (x, y, z), tuple that represents the center
-        _snap:      Table [N, M+...], each line is a star;
-                    each column a star feature. Additional features
-                    can be added by specific methods
-
+    Notes
+    -----
+    N, project and center are properties of the class that can be set with 
+    consistent setter methods. Namely, changing values for these properties
+    has an effect on other quantities of the snapshot. 
+    In particular, 
+    N = val : permanently truncate the orginal snapshot to the first val elements
+    center = (...) : re-center the cluster by changing _x,_y,_z,_r.
+    project = True/False : re-calculate _r 
     """
 
-    def __init__(self, *args, **kwargs):
-        super(Snapshot, self).__init__(*args, **kwargs)
+    def __init__(self, data=None, names=None, dtype=None, 
+        project=False, center=(0,0,0)):
+        self._data = Table(data=data, names=names, dtype=dtype)
 
-        self._center = (0, 0, 0)
-
-        # check user's features
         self._check_features('x', 'y', 'z', function_id='Initialization')
-
-
-    def filter(self, overwrite=True, by_range=True, **kwargs):
+        self._colnames_init = self._data.colnames
+        self.__project = project # initialize project
+        self.__center = center # initialize center
+        self.center = center # use center setter to initialize also _x, _y, _z, _r
+        self.__N = len(self._data) # initialize number of stars (do not use N.setter)
+        self._data['_mask'] = np.ones(self.N, dtype=bool)
+        
+    def _check_features(self, *args, **kwargs):
         """
-        Mask the Snapshot by selecting stars according to different
+        Raise a ValueError if one of the features specified by args are 
+        not column names of the cluster
+
+        args : str,
+            Column names
+        kwargs : {function_id : str},
+            Calling function 
+        """
+        # default, cannnot trace back to the calling function 
+        kwargs["function_id"] = kwargs.get("function_id", "?? ") 
+
+        missing_features = []
+        for feature in args:
+            if feature not in self._data.colnames:
+                missing_features.append(feature)
+        if len(missing_features) > 0:
+            raise ValueError(kwargs["function_id"] + ': provide ' + \
+                str(missing_features))
+        
+    def filter(self, overwrite=True, by_range=None, **kwargs):
+        """
+        Mask Snapshot by selecting stars according to different
         criteria. All the criteria specified are combined in a logical 
         union mask.
         If by range is True, star are selected with the provided ranges. 
@@ -80,483 +114,174 @@ class Snapshot(Table):
         If overwrite is True, the masking is applied to the original snapshot. 
         Otherwise, it is applied to the existent filter.
 
-        Masking examples:
+        Parameters
+        ----------
+            overwrite : bool
+                Specify if the filter has to be overwritten to the existent one.
+            by_range : bool, list
+                Specify filter types. Default is true for all filters. 
+            kwargs : keys are Snapshot columns and values are list-like objects   
 
-        Select only main sequence stars with ks = 0 or 1:
-            filter(by_range=False, ks=(0,1))
+        Examples
+        --------
+            Select only main sequence stars with ks = 0 or 1:
+            >> filter(by_range=False, ks=(0,1))
 
-        Select stars with radius within rmin and rmax:
-            filter(r=(rmin, rmax))
+            Select stars with radius within rmin and rmax:
+            >> filter(_r=(rmin, rmax))
+
+            Select both main sequence stars (ks = 0, 1) and stars within radius 10.:
+            >> filter(by_range=[0,1], ks=(0,1), _r=(0.,10.))
         """
+        # check if the number of elements in by_range matches the number of
+        # kwargs
+        if by_range is None: # default case
+            by_range = np.ones(len(kwargs), dtype=bool)
+        try: 
+            num = len(by_range) # by_range is a list!
+        except:
+            by_range = [by_range, ] # make by_range a list
+            num = 1
+            assert len(kwargs) == num, \
+                "Number of criteria must match type of filters" 
+
         # check for invalid keys
         for key, value in kwargs.iteritems():
-            if key not in self._snap.colnames:
+            if key not in self._data.colnames:
                 raise KeyError(key + " is an invalid argument")
 
-        # reset selection
-        if overwrite: # reset masking
-            self. = np.ones(self.N, dtype='bool')
+        # reset mask
+        if (overwrite) or (not "_mask" in self._data.colnames): # reset masking
+            self._data["_mask"] = np.ones(len(self._data), dtype='bool')
 
-        self._mask = self._mask(**kwargs)
+        self._data["_mask"] = self._get_mask(by_range, **kwargs)
 
-    def _check_features(self, *args, **kwargs):
+    def _get_mask(self, by_range, **kwargs):
         """
-        Raise a ValueError if one of the features specified by args are 
-        not column names of the cluster
-
-        kwargs
-            function_id  str, calling function 
+        Return a single bool array, which is the logical union of
+        all the mask criteria
         """
-        # default, cannnot trace back to the calling function 
-        kwargs["function_id"] = kwargs.get("function_id", "?? ") 
+        # list of masking criteria: first element is the existent mask
+        mask = [self._data["_mask"], ]
 
-        missing_features = []
-        for feature in args:
-            if feature not in self.colnames:
-                missing_features.append(feature)
-        if len(missing_features) > 0:
-            raise ValueError(function_id + ': provide ' + str(missing_features))
+        for n, (key, value) in enumerate(kwargs.iteritems()):
+            # for each masking criterium
 
-    # def select_stars(self, overwrite=True, **kwargs):
-    #     """
-    #     Mask the Snapshot by selecting stars according to different
-    #     criteria. All the criteria specified are combined in a logical 
-    #     union mask.
-    #     If overwrite is True, the masking is applied to the original snapshot. 
-    #     Otherwise, it is applied to the existent selection.
+            if not by_range[n]: 
+                # select only elements in the list provided with value
+                mask.append(np.in1d(self._data[key], value)) 
+            else: 
+                # select only elements in the given range
+                try:
+                    if (len(value) == 2):
+                        condition = np.logical_and(
+                            self._data[key] >= value[0],
+                            self._data[key] < value[1]
+                            )
+                    else: # raise a sure error to exit with ValueError
+                        tmp = value[len(value)] # dummy line
+                except:
+                    raise ValueError(
+                        str(value) + " is an invalid value for masking " \
+                        + key)
+                mask.append(condition)
+        if len(mask) == 1:
+            return mask[0]
+        if len(mask) > 1:
+            return np.logical_and.reduce(mask)
 
-    #     Masking examples:
-    #         ks:     array-like (1,2,...,14), stellar type
-    #         m:      array-like (mmin, mmax), stellar mass range
-    #         r:      array-like (rmin, rmax), radial range
-    #         id:     array-like (id1, id2, ...), specific ids of stars
-    #     """
-    #     # check for invalid keys
-    #     for key, value in kwargs.iteritems():
-    #         if key not in self._snap.colnames:
-    #             raise KeyError(key + " is an invalid argument")
+    def add_local_density(self, n_neighbors=6):
+        """
+        Add hidden column for local density (relies on gcp.get_local_density). 
 
-    #     # reset selection
-    #     if overwrite: # reset masking
-    #         self._snap['mask'] = np.ones(self.N, dtype='bool')
+        Parameter
+        ---------
+            n_neighbors : int, optional
+                Number of neighbors for local density
+        Notes
+        -----
+            Local density is calculated for the subgroup of selected stars.
+        """
+        if hasattr(self._data, "_rho"):
+            return
+        rho = gcp.get_local_density(self, 
+            n_neighbors=n_neighbors, masked=True)
+        self._data["_rho"] = np.full(len(self._data), np.nan)
+        self._data["_rho"][self._data['_mask']] = rho
 
-    #     self._snap['mask'] = self._mask(**kwargs)
+    def sort(self, column):
+        """
+        Sort Snapshot according to the specified column.
 
-    # def get_selection(self):
-    #     """
-    #     Return Table of length = N_reduced, where N_reduced <= N, is the number 
-    #     of stars selected by the user after masking the original snapshot.
-    #     """
-    #     selection = self._snap[:][self._snap['mask']]
-    #     # if present, remove columns that have been added by this class
-    #     selection.remove_column('mask')
-    #     try:
-    #         selection.remove_column('r')
-    #     except:
-    #         pass
-    #     return selection
+        Parameter
+        ---------
+            column : str,
+                Column name of the quantity used for argsorting
+        """
+        # check if column exists
+        self._check_features(column, function_id='argsort')
+        self._data = self._data[np.argsort(self._data[column])]
 
-    # def get_center(self):
-    #     """
-    #     Return center coordinates
-    #     """
-    #     return self._center
+    @property
+    def N(self):
+        return self.__N
 
-    # def get_r(self, mask=False):
-    #     """
-    #     Return distance to the center of all the stars.
-    #     If mask is True, return only the distance of the selected stars.
-    #     """
-    #     if mask:
-    #         snap = self.get_selection()
-    #     else:
-    #         snap = self._snap
-    #     if self.sort_flag:
-    #         if mask:
-    #             radius = self._snap[:][self._snap['mask']]['r']
-    #         else:
-    #             radius = self._snap['r']
-    #     else:
-    #         if self.project_flag:
-    #             radius = np.sqrt(
-    #                 (snap['x']-self._center[0])**2.
-    #                 + (snap['y']-self._center[1])**2.
-    #                 )
-    #         else: 
-    #             radius = np.sqrt(
-    #                 (snap['x']-self._center[0])**2.
-    #                 + (snap['y']-self._center[1])**2.
-    #                 + (snap['z']-self._center[2])**2.
-    #                 )
-    #     return radius
+    @N.setter
+    def N(self, val):
+        assert isinstance(val, int), "N must be an integer value"
+        assert val > 0 and val < self.N, "Invalid value for N"
+        self.__N = val
+        truncate = np.ones(len(self._data), dtype=bool)
+        truncate[val:] = False
+        self._data = self._data[truncate]
 
-    # def reset_center(self, center, sort=False):
-    #     """
-    #     Change the coordinates of the cluster's center and optionally sort.
-    #     """
-    #     # check the new center
-    #     try:
-    #         if self.project_flag:
-    #             if (len(center) != 2):
-    #                 raise ValueError("Provide a center in the form (x, y)")
-    #             else:
-    #                 self._center = (center[0], center[1], np.nan)
+    @property
+    def center(self):
+        return self.__center
 
-    #         else:
-    #             if (len(center) != 3):
-    #                 raise ValueError("Provide a center in the form (x, y, z)")
-    #             self._center = tuple(center) 
-    #     except:
-    #         raise ValueError(str(center) + " invalid argument!") 
-    #     if sort:
-    #         self._rad_sort()
+    @center.setter   
+    def center(self, center):
+        assert len(center) == 3, "Specify 3 coordinates for the new center!"
+        self.__center = center
+        self._data["_x"] = self._data["x"] - center[0]
+        self._data["_y"] = self._data["y"] - center[1]
+        self._data["_z"] = self._data["z"] - center[2]
+        self._calculate_radius()
 
-    # def com(self):
-    #     """
-    #     Return center of mass.
-    #     """
-    #     self._check_features('Center of Mass', 'm')
+    @property
+    def project(self):
+        return self.__project
 
-    #     t = self.get_selection()
-    #     if self.project_flag:
-    #         com = tuple(np.array([
-    #            np.dot(t['x'],t['m']),
-    #            np.dot(t['y'],t['m'])
-    #            ]) / np.sum(t['m'])) + (np.nan,)
-    #     else:
-    #         com = tuple(np.array([
-    #            np.dot(t['x'],t['m']),
-    #            np.dot(t['y'],t['m']),
-    #            np.dot(t['z'],t['m'])
-    #            ]) / np.sum(t['m']))
-    #     return com
-
-    # def lagr_r(self, percs):
-    #     """
-    #     Return an array where the i-th element is the radius that contains
-    #     a fraction percs[i] of the global mass.
-    #     """
-    #     if not self.sort_flag:
-    #         raise Warning(
-    #             "The evaluation of Lagr. radii requires the cluster" + \
-    #             " to be radially sorted !")
-
-    #     self._check_features('Lagrangian radii', 'm')
-
-    #     snap = self.get_selection()
-    #     snap['r'] = self.get_r(mask=True)
-    #     #snap = self._snap[:][self._snap['mask']]
-    #     try:
-    #         percs = tuple(percs) 
-    #     except:
-    #         percs = (percs, )
-    #     M = np.sum(snap['m'])
-    #     lagr_radii = []
-    #     for perc in percs:
-    #         Mperc = M * perc / 100. # fraction of total mass
-    #         def diff(n): 
-    #             # calculate the difference between the global mass of the 
-    #             # first n elements and Mperc
-    #             return np.sum(snap['m'][:n+1]) - Mperc
-    #         a = 0
-    #         b = len(snap) - 1
-    #         Nguess = a + (b-a)/2
-    
-    #         while True: # bisection method
-    #             dm_guess = diff(Nguess) 
-    #             if dm_guess > 0: # lagr radius inside radius of Nguess-th star
-    #                 b = Nguess
-    #                 if ((b - a) == 1):
-    #                     lagr_radii.append((snap['r'][Nguess] +\
-    #                          snap['r'][Nguess-1]) / 2.)
-    #                     break
-    #                 Nguess = a + (b-a)/2 
-    #             else: # lagr radius outside r[Nguess]
-    #                 a = Nguess
-    #                 if ((b - a) == 1):
-    #                     lagr_radii.append((snap['r'][Nguess] +\
-    #                          snap['r'][Nguess+1]) / 2.)
-    #                     break
-    #                 Nguess = a + (b-a)/2
-    #     if len(lagr_radii) == 1:
-    #         return lagr_radii[0]
-    #     return lagr_radii
-
-    # def sigma(self, los=False):
-    #     """
-    #     Return [s,ds] with s velocity dispersion (2D if projected, 
-    #     along the line-of-sight if los=True) and ds standard error of s.
-    #     """
-    #     snap = self.get_selection()
-    #     if los:
-    #         self._check_features('Velocity dispersion', 'vz')
-    #         sig = np.sqrt(np.std(snap['vz'])**2.)
-    #     elif self.project_flag:
-    #         self._check_features('Velocity dispersion', 'vx', 'vy')
-    #         sig = np.sqrt(np.std(snap['vx'])**2. +
-    #             np.std(snap['vy'])**2.)
-    #     else:
-    #         self._check_features('Velocity dispersion', 'vx', 'vy', 'vz')
-    #         sig = np.sqrt(np.std(snap['vx'])**2. +
-    #             np.std(snap['vy'])**2. + np.std(snap['vz'])**2.)
-
-    #     return sig, np.sqrt(sig**2./(2.*len(snap)))
-
-    # def density(self, quantity=None):
-    #     """
-    #     Return density of a specified quantity. Default is number 
-    #     density.
-    #     """
-    #     snap = self.get_selection()
-    #     snap['r'] = self.get_r(mask=True)
-    #     if quantity is None:
-    #         numerator = len(snap) 
-    #     else:
-    #         self._check_features('Density', quantity)
-    #         numerator = np.sum(snap[quantity])
-
-    #     rad = self.get_r(mask=True)
-    #     if self.project_flag:
-    #         denominator = np.pi * (np.max(rad)**2. 
-    #             - np.min(rad)**2.)
-    #     else:
-    #         denominator = 4./3. * np.pi * (np.max(rad)**3. 
-    #             - np.min(rad)**3.)
-    #     return np.average(rad), numerator / denominator 
-
-    # def MF(self, nbins='auto'):
-    #     """
-    #     Return the output of numpy.histogram(m, bins=nbins), 
-    #     where m is the mass of the selected stars.
-    #     """
-    #     snap = self.get_selection()
-    #     self._check_features('Mass function', 'm')
-    #     return np.histogram(snap['m'], bins=nbins) 
-
-    # def trh(self):
-    #     """
-    #     Return half-mass relaxation time (see eq.3 in Trenti+ 10)
-    #     """
-    #     N = len(self.get_selection())
-    #     rh = self.larg_r(50.)
-    #     return 0.138 * N * rh**1.5 / np.log(0.11 * N)
-
-    # def alpha(self, nbins=10, plot=False):
-    #     """
-    #     Return [alpha, dalpha], with alpha and dalpha respectively 
-    #     slope and error of the Mass Function with nbins mass bins with 
-    #     approximately the same numbe of stars.
-    #     Optionally plots the linear fit.
-    #     """
-    #     # get sorted cluster with radius
-    #     snap = get_selection()
-    #     N = len(snap)
-
-    #     # define variable mass bins by fixing the number of stars in the bin
-    #     # (see Maiz&Ubeda05)
-    #     stars_per_bin = N // nbins # minimum number of stars per bin
-    #     exceeding_stars = N % nbins # intial number of stars in excess
-    #     nbin = [] # list with len nbins:
-    #               # each element gives the number of stars in a mass bin
-    #     for n in range(nbins): # for each mass bin...
-    #         if exceeding_stars > 0:
-    #             nbin.append(stars_per_bin + 1)
-    #             exceeding_stars = exceeding_stars - 1
-    #         else:
-    #             nbin.append(stars_per_bin) # leave the fixed number of stars
-    #     np.random.shuffle(nbin) # shuffle to avoid systematics
-
-    #     m_sort = np.sort(snap['m']) # sorted masses
-    #     xlist, ylist, yerrlist = [], [], []
-    #     for i in range(nbins):
-    #         # get masses in the bin
-    #         ms = m_sort[int(np.sum(nbin[:i])):int(np.sum(nbin[:i+1]))]
-    #         Ni = len(ms) # stars in bin
-    #         dmi = ms[-1] - ms[0] # bin width
-    #         yi = np.log10(Ni/dmi) # value of mass function
-    #         xi = np.log10(np.mean(ms)) # average mass in bin
-    #         wi = Ni * N / (N-Ni) / (np.log10(np.e))**2. # weights
-    #         si = 1. / np.sqrt(wi) # error of log10(Ni)
-    #         yi_err = yi * np.log(np.e) * si 
-    #         ylist.append(yi)
-    #         xlist.append(xi)
-    #         yerrlist.append(yi_err)
-    #     x, y, yerr  = np.array(xlist), np.array(ylist), np.array(yerrlist)
-
-    #     theta, theta_err = lregr(x, y, yerr, 
-    #         verbose=plot, plot=plot, labels=('log(mass)','log(dN/dm)'))
-    #     return theta[1], theta_err[1]
-
-    # def get_local_density(self, neighbors=6, mask=False):
-    #     """
-    #     If present, return the local densities for the selected stars.
-    #     Otherwise, calculate (and then return) the local densities following
-    #     Casertano & Hut '85.
-
-    #     Arguments:
-    #     neighbors   int, 
-    #                 number of closest stars used to evaluate the local density
-
-    #     mask        bool,
-    #                 if False the calculation is performed on the entire 
-    #                 cluster, and not only on the subgroup of selected stars.
-    #     """
-    #     try:
-    #         if mask:
-    #             rho = self._snap[:][self._snap['mask']]['rho']
-    #         else:
-    #             rho = self._snap['rho']
-    #         return rho
-    #     except:
-    #         self._check_features('Local density', 'm')
-
-    #         if mask:
-    #             snap = self.get_selection()
-    #         else:
-    #             snap = self._snap
-    #         m, x, y, z = snap['m'], snap['x'], snap['y'], snap['z']
-
-    #         rho = np.ones(self.N) * np.nan
-    #         for i in range (len(snap)): #for each star 
-    #             # partially sort the mass array according 
-    #             # to the distances r to the i-th star...
-
-    #             # find distances to the i-th star
-    #             r = np.sqrt((x - x[i])**2. + (y - y[i])**2. + (z - z[i])**2.)
-    #             # find indeces that would sort the first neighbors of r 
-    #             so = np.argpartition(r, neighbors)
-    #             rs = r[so][:neighbors+1] # distances of the close neighbors
-    #             ms = m[so][:neighbors+1] # masses of the close neighbors
-
-    #             # finally, the local density
-    #             # note: the total mass at the numerator is calculated excluding 
-    #             # the masses of the i-th star and its neighbors-th closest star.
-    #             rho[i] = (np.sum(ms[:-1]) - m[i]) / \
-    #                 (4./3 * np.pi * rs[neighbors]**3)
+    @project.setter
+    def project(self, val):
+        assert isinstance(val, bool), "project must be True or False"
+        self.__project = val
+        self._calculate_radius()
         
-    #         self._snap['rho'] = np.array(rho)
-    #         if mask:
-    #             return self._snap[:][self._snap['mask']]['rho']
-    #         else:
-    #             return self._snap['rho']
+    @property
+    def original(self):
+        """ Original snapshot. """
+        return self._data[self._colnames_init]
 
-    # def density_center(self):
-    #     """
-    #     Return density center.
-    #     """
-    #     self._check_features('Density center', 'rho')
+    @property
+    def rad_sorted(self):
+        """ Masked Snapshot, radially sorted. """
+        so = np.argsort(self._data['_r'])
+        return self._data[self._colnames_init][so]
+        
+    def __getitem__(self, item):
+        return self._data[self._data['_mask']][item]
+    
+    def _calculate_radius(self):
+        if self.project:
+            self._data["_r"] = np.sqrt(self._data["_x"]**2. + self._data["_y"]**2.)
+        else:
+            self._data["_r"] = np.sqrt(
+                self._data["_x"]**2. + self._data["_y"]**2. + self._data["_z"]**2.)
 
-    #     t = self._snap[:][self._snap['mask']]
-    #     if self.project_flag:
-    #         dc = tuple(np.array([
-    #            np.dot(t['x'],t['rho']),
-    #            np.dot(t['y'],t['rho'])
-    #            ]) / np.sum(t['rho'])) + (np.nan,)
-    #     else:
-    #         dc = tuple(np.array([
-    #            np.dot(t['x'],t['rho']),
-    #            np.dot(t['y'],t['rho']),
-    #            np.dot(t['z'],t['rho'])
-    #            ]) / np.sum(t['rho']))
-    #     return dc
+    def __repr__(self):
+        return "Snapshot : N = %i, project = %r, center = (%.1f, %.1f, %.1f)" % \
+            (self.N, self.project, self.center[0], self.center[1], self.center[2])
 
-    # def density_radius(self):
-    #     """
-    #     Return density radius (mass-weighted) (see de Vita+ 18)
-    #     """
-    #     self._check_features('Density radius', 'rho', 'm')
-
-    #     dc = self.density_center()
-    #     t = self._snap[:][self._snap['mask']]
-
-    #     if self.project_flag:
-    #         radius = np.sqrt((t['x']-dc[0])**2. + (t['y']-dc[1])**2.)
-    #     else:
-    #         radius = np.sqrt((
-    #             (t['x']-dc[0])**2. +
-    #             (t['y']-dc[1])**2. +
-    #             (t['z']-dc[2])**2.))
-    #     num = np.sum(radius * t['rho'] * t['m'])
-    #     den = np.sum(t['rho'] * t['m'])
-    #     return num / den
-
-    # def _rad_sort(self):
-    #     """
-    #     Radially sort the cluster with respect to the center
-    #     """
-    #     if self.project_flag:
-    #         radius = np.sqrt(
-    #             (self._snap['x']-self._center[0])**2.
-    #             + (self._snap['y']-self._center[1])**2.
-    #             )
-    #     else: 
-    #         radius = np.sqrt(
-    #             (self._snap['x']-self._center[0])**2.
-    #             + (self._snap['y']-self._center[1])**2.
-    #             + (self._snap['z']-self._center[2])**2.
-    #             )
-    #     self._snap['r'] = radius
-    #     self._snap.sort(keys='r') # sort inplace 
-
-    # def _mask(self, **kwargs):
-    #     """
-    #     Return a single bool array, which is the logical union of
-    #     all the selection criteria
-    #     """
-    #     # list of masking criteria: first element is the existent mask
-    #     mask = [self._snap['mask'], ]
-
-    #     for key, value in kwargs.iteritems():
-    #         # for each masking criterium
-
-    #         if (np.issubdtype(self._snap[key].dtype, int)): 
-    #             # if the mask is applied on integer numbers ...
-    #             # select only elements in the list provided with value
-    #             mask.append(np.isin(self._snap[key], value)) 
-    #         elif (np.issubdtype(self._snap[key].dtype, float)): 
-    #             # else, if the mask is applied on floats
-    #             # select only elements in the given range
-    #             try:
-    #                 if (len(value) == 2):
-    #                     condition = np.logical_and(
-    #                         self._snap[key] >= value[0],
-    #                         self._snap[key] < value[1]
-    #                         )
-    #                 else: # raise a sure exception
-    #                     tmp = value[len(value)] 
-    #             except:
-    #                 raise ValueError(
-    #                     str(value) + " is an invalid value for masking " \
-    #                     + key)
-    #             mask.append(condition)
-    #     if len(mask) == 1:
-    #         return mask[0]
-    #     if len(mask) > 1:
-    #         return np.logical_and.reduce(mask)
-
-
-    # # def info(self):
-    # #     """
-    # #         Print basic information of the snapshot
-    # #     """
-    # #     output = collections.OrderedDict()
-    # #     output['N stars'] = len(self._snap)
-    # #     if self.sort_flag:
-    # #         output['Max radius'] = np.max(self._snap['r'])
-    # #     output['M tot'] = np.sum(self.selection['m'])
-    # #     output['5   per cent Lagr. rad.'] = self.Lagr_radii()[1][1]
-    # #     output['10  per cent Lagr. rad.'] = self.Lagr_radii()[2][1]
-    # #     output['half-mass rad.'] = self.rh()
-    # #     output['95  per cent Lagr. rad.'] = self.Lagr_radii()[-2][1]
-    # #     output['100 per cent Lagr. rad.'] = self.Lagr_radii()[-1][1]
-    # #     if 'rho' in self._snap.columns:
-    # #         output['density rad.'] = self.rd()
-    # #     output['half-mass relax. time'] = self.trh()
-
-    # #     s = ''
-    # #     for key in output.keys():
-    # #         s += ('{:30}'.format(key) + str(output[key]) + '\n')
-    # #     return s
-
-
-
+    def __str__(self):
+        return '\n'.join(self[:].pformat())

@@ -10,7 +10,7 @@ def test_lregr():
 	# Generate some synthetic data from the model.
 	N = 50
 	x = np.sort(10*np.random.rand(N))
-	yerr = 0.1 + 0.5*np.random.rand(N)
+	yerr = 0.01 + 0.5*np.random.rand(N)
 	y = m_true*x + b_true
 	y += yerr * np.random.randn(N)
 
