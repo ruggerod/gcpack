@@ -9,7 +9,7 @@ from .sample_cluster import random_cluster
 class TestSnap():
 	def test_default_init(self):
 		# 1. right construction 
-		tab = random_cluster(100, id='i', ks=14, x='f', y='f', z='f',
+		tab = random_cluster(100, id='i', kw=14, x='f', y='f', z='f',
 			vx='f', vy='f', vz='f')
 		s = gcp.Snapshot(tab)
 		assert (len(s.original) == len(tab))
@@ -19,7 +19,7 @@ class TestSnap():
 			s = gcp.Snapshot([np.arange(100)], names=['m'])
 
 	def test_filter(self):
-		tab = random_cluster(10000, id='i', ks=14, m='f', x='f', y='f', z='f',
+		tab = random_cluster(10000, id='i', kw=14, m='f', x='f', y='f', z='f',
 			vx='f', vy='f', vz='f')
 		# 1. default selection
 		s = gcp.Snapshot(tab)
@@ -35,12 +35,12 @@ class TestSnap():
 		assert np.all(s['m'] >= 0.6)
 
 		# 3. inplace selection
-		s.filter(overwrite=False, by_range=False, id=np.arange(100))
+		s.filter(m=(0.6,1.0), id=np.arange(50), by_range={'m':True, 'id':False})
 		# are element in the same range as before, but also with the new 
 		# selection criterium applied ?
-		assert np.all(s['m'] >= 0.6)
 		assert np.all(s['m'] < 1.0)
-		assert np.all(s['id'] <= 100)
+		assert np.all(s['m'] >= 0.6)
+		assert np.all(s['id'] <= 50)
 
 		# 4. wrong selection
 		# 4.a wrong key

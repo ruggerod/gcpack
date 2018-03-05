@@ -466,6 +466,6 @@ def hm_relax_time(snap, masked=True):
     	N = snap.N
 
     # calculate half-mass radius
-    rh = larg_rad(50., masked=masked)
+    rh = lagr_rad(snap, 50., masked=masked)
 
     return 0.138 * N * rh**1.5 / np.log(0.11 * N)

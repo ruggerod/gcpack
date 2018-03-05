@@ -26,7 +26,7 @@ class Snapshot(object):
         vx, vy, vz : optional, velocity as separate columns
         m : optional, mass
         id : optional, star id
-        ks : optional, stellar type
+        kw : optional, stellar type
         l : optional, luminosity
         rho : optional, local density
         mu : optional, local surface brightness
@@ -118,32 +118,31 @@ class Snapshot(object):
         ----------
             overwrite : bool
                 Specify if the filter has to be overwritten to the existent one.
-            by_range : bool, list
-                Specify filter types. Default is true for all filters. 
+            by_range : dict,
+                Specify filter types. Keys are Snapshot columns and values are
+                boolean values. Default is true for all filters. 
             kwargs : keys are Snapshot columns and values are list-like objects   
 
         Examples
         --------
-            Select only main sequence stars with ks = 0 or 1:
-            >> filter(by_range=False, ks=(0,1))
+            Select only main sequence stars with kw = 0 or 1:
+            >> filter(by_range={'kw':False}, kw=(0,1))
 
             Select stars with radius within rmin and rmax:
             >> filter(_r=(rmin, rmax))
 
-            Select both main sequence stars (ks = 0, 1) and stars within radius 10.:
-            >> filter(by_range=[0,1], ks=(0,1), _r=(0.,10.))
+            Select both main sequence stars (kw = 0, 1) and stars within radius 10.:
+            >> filter(by_range={'kw':False, '_r':False}, kw=(0,1), _r=(0.,10.))
         """
         # check if the number of elements in by_range matches the number of
         # kwargs
         if by_range is None: # default case
-            by_range = np.ones(len(kwargs), dtype=bool)
-        try: 
-            num = len(by_range) # by_range is a list!
-        except:
-            by_range = [by_range, ] # make by_range a list
-            num = 1
-            assert len(kwargs) == num, \
-                "Number of criteria must match type of filters" 
+            by_range = {}
+            for key in kwargs.keys():
+                by_range[key] = True
+        else: 
+            if not (by_range.keys() == kwargs.keys()):
+                raise ValueError("Invalid Filter")
 
         # check for invalid keys
         for key, value in kwargs.iteritems():
@@ -167,7 +166,7 @@ class Snapshot(object):
         for n, (key, value) in enumerate(kwargs.iteritems()):
             # for each masking criterium
 
-            if not by_range[n]: 
+            if not by_range[key]: 
                 # select only elements in the list provided with value
                 mask.append(np.in1d(self._data[key], value)) 
             else: 

@@ -19,7 +19,7 @@ class TestCore():
 		# masked com
 		i = (0, 1, 2)
 		s = gcp.Snapshot(data=[i, m, x, y, z], names=['id', 'm', 'x', 'y', 'z'])
-		s.filter(id=(0,1), by_range=False)
+		s.filter(id=(0,1), by_range={"id":False})
 		assert gcp.center_of_mass(s, masked=True) == [1., 0., 0.]
 
 		# projected com
@@ -70,18 +70,22 @@ class TestCore():
 	def test_lagr_radii(self):
 		tab = random_cluster(100, x='f', y='f', z='f')
 		s = gcp.Snapshot(tab)
-		# 1. what if an incomplete cluster is passed?
+		# what if an incomplete cluster is passed?
 		with pytest.raises(ValueError):
 			gcp.lagr_rad(s, 50.)
 
 		# produce a realistic GC with rh = 2.5pc
 		rh = 2.5
-		tab = limepy_cluster(10000, seed=0, M=33070, rh=rh)
+		tab = limepy_cluster(10000, seed=np.random.randint(0,999), M=33070, rh=rh)
 		# pass it to an instance of Snapshot
 		s = gcp.Snapshot(tab)
-		# 2. test if numbers make sense, namely the relative error for the 
-		# half-mass radius of a N=10K better be less than 2%
-		assert abs((gcp.lagr_rad(s, 50.) - rh)/rh) < 0.02
+		# test if numbers make sense, namely the relative error for the 
+		# half-mass radius of a N=10K better be less than 5%
+		rh_calc = gcp.lagr_rad(s, 50.)
+		assert abs(2. * (rh_calc - rh)/(rh_calc + rh)) < 0.05
+		# what if the lagr. percentage is 100 or greater ?
+		assert gcp.lagr_rad(s, 100.) <= np.max(s['_r'])
+		assert gcp.lagr_rad(s, 200.) <= np.max(s['_r'])
 
 	def test_density_radius(self):
 		# produce a test cluster with 10 stars (separated by 1 pc)
@@ -117,7 +121,7 @@ class TestCore():
 
 		# masked
 		s_mskd = gcp.Snapshot(tab)
-		s_mskd.filter(id=(0,1), by_range=False)
+		s_mskd.filter(id=(0,1), by_range={"id":False})
 		assert gcp.velocity_dispersion(s_mskd)[0] == np.sqrt(np.std([3.,9.]))
 
 		# projected

@@ -27,7 +27,7 @@ def random_cluster(N, **kwargs):
 
 	Example
 	-------
-		random_cluster(100, id='i', m='f', ks=14, x='f')
+		random_cluster(100, id='i', m='f', kw=14, x='f')
 	"""
 	tab = Table(meta={'name': 'cluster'})
 	for key, value in kwargs.iteritems():
