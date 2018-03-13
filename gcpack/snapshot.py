@@ -118,7 +118,7 @@ class Snapshot(object):
         ----------
             overwrite : bool
                 Specify if the filter has to be overwritten to the existent one.
-            by_range : dict,
+            by_range : dict, optional
                 Specify filter types. Keys are Snapshot columns and values are
                 boolean values. Default is true for all filters. 
             kwargs : keys are Snapshot columns and values are list-like objects   
@@ -132,7 +132,7 @@ class Snapshot(object):
             >> filter(_r=(rmin, rmax))
 
             Select both main sequence stars (kw = 0, 1) and stars within radius 10.:
-            >> filter(by_range={'kw':False, '_r':False}, kw=(0,1), _r=(0.,10.))
+            >> filter(by_range={'kw':False, '_r':True}, kw=(0,1), _r=(0.,10.))
         """
         # check if the number of elements in by_range matches the number of
         # kwargs

@@ -80,12 +80,24 @@ class TestCore():
 		# pass it to an instance of Snapshot
 		s = gcp.Snapshot(tab)
 		# test if numbers make sense, namely the relative error for the 
-		# half-mass radius of a N=10K better be less than 5%
+		# half-mass radius of a N=10K better be less than 10%
 		rh_calc = gcp.lagr_rad(s, 50.)
-		assert abs(2. * (rh_calc - rh)/(rh_calc + rh)) < 0.05
+		assert abs(2. * (rh_calc - rh)/(rh_calc + rh)) < 0.1
 		# what if the lagr. percentage is 100 or greater ?
 		assert gcp.lagr_rad(s, 100.) <= np.max(s['_r'])
 		assert gcp.lagr_rad(s, 200.) <= np.max(s['_r'])
+
+		# what if an almost empty cluster is passed?
+		tab = random_cluster(2, m='f', x='f', y='f', z='f')
+		s = gcp.Snapshot(tab)
+		rh = gcp.lagr_rad(s, 50.) 
+		assert np.isnan(rh)
+
+		# what if an almost empty cluster is passed?
+		tab = random_cluster(3, m='f', x='f', y='f', z='f')
+		s = gcp.Snapshot(tab)
+		lagrs = gcp.lagr_rad(s, np.arange(100.)) 
+		assert not np.all(np.isnan(lagrs))
 
 	def test_density_radius(self):
 		# produce a test cluster with 10 stars (separated by 1 pc)
@@ -130,6 +142,12 @@ class TestCore():
 
 		# los
 		assert gcp.velocity_dispersion(s, los=True)[0] == np.sqrt(np.std([1.,4.,4.]))
+
+		# empty cluster
+		tab = Table(names=('x','y','z','vx','vy','vz'))
+		s = gcp.Snapshot(tab)
+		assert np.isnan(gcp.velocity_dispersion(s)[0])
+		assert np.isnan(gcp.velocity_dispersion(s)[1])
 
 	def test_density(self):
 		# produce a test cluster with 5 stars (separated by 1 pc)

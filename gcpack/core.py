@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.neighbors import KDTree
+import warnings
 
 from gcpack.lin_regr import lregr
 
@@ -159,6 +160,12 @@ def lagr_rad(snap, percs, masked=True):
     # check against required columns
     snap._check_features('m', function_id='Lagrangian radii')
 
+    # force percs to be a tuple
+    try:
+        percs = tuple(percs) 
+    except:
+        percs = (percs, )
+
     # get radius and mass
     if masked:
         r = snap['_r']
@@ -167,16 +174,18 @@ def lagr_rad(snap, percs, masked=True):
         r = snap._data['_r']
         m = snap._data['m']
 
+    # dummy case : empty (or almost) cluster
+    if len(r) <= 2: 
+        warnings.warn("Too few stars!", RuntimeWarning)
+        if len(percs) == 1:
+            return np.nan
+        else:
+            return [np.nan for perc in percs]
+
     # sort by radius
     so = np.argsort(r)
     r_sort = r[so]
     m_sort = m[so]
-
-    # force percs to be a tuple
-    try:
-        percs = tuple(percs) 
-    except:
-        percs = (percs, )
 
     # use bisection method for Lagrangian radii calculations
     M = np.sum(m_sort)
