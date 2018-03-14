@@ -202,6 +202,10 @@ def lagr_rad(snap, percs, masked=True):
 
         # bisection method
         while True:
+            if perc >= 100.: # truncation radius contains the max radius
+                lagr_radii.append(r_sort[-1]*(1+1e-10))
+                break
+
             dm_guess = diff(Nguess) 
             if dm_guess > 0: # lagr radius inside radius of Nguess-th star
                 b = Nguess

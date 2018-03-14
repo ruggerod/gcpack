@@ -84,8 +84,10 @@ class TestCore():
 		rh_calc = gcp.lagr_rad(s, 50.)
 		assert abs(2. * (rh_calc - rh)/(rh_calc + rh)) < 0.1
 		# what if the lagr. percentage is 100 or greater ?
-		assert gcp.lagr_rad(s, 100.) <= np.max(s['_r'])
-		assert gcp.lagr_rad(s, 200.) <= np.max(s['_r'])
+		assert gcp.lagr_rad(s, 100.) >= np.max(s["_r"])
+		assert gcp.lagr_rad(s, 105.) == gcp.lagr_rad(s, 100.) 
+		s.filter(_r=(0.,gcp.lagr_rad(s, 100.)))
+		assert len(s[:]) == 10000
 
 		# what if an almost empty cluster is passed?
 		tab = random_cluster(2, m='f', x='f', y='f', z='f')
@@ -93,7 +95,7 @@ class TestCore():
 		rh = gcp.lagr_rad(s, 50.) 
 		assert np.isnan(rh)
 
-		# what if an almost empty cluster is passed?
+		# what if a small (but not almost empty) cluster is passed?
 		tab = random_cluster(3, m='f', x='f', y='f', z='f')
 		s = gcp.Snapshot(tab)
 		lagrs = gcp.lagr_rad(s, np.arange(100.)) 
