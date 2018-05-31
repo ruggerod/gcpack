@@ -129,21 +129,28 @@ class TestCore():
 		tab['vy'] = [1., 2., 2.]
 		tab['vz'] = [1., 2., 2.]
 
-		# intrinsic
+		# 3D
 		s = gcp.Snapshot(tab)
-		assert gcp.velocity_dispersion(s)[0] == np.sqrt(np.std([3.,9.,9.]))
+		sig2 = (np.std(s['vx'])**2., np.std(s['vy'])**2., np.std(s['vz'])**2.)
+		assert gcp.velocity_dispersion(s)[0] == np.sqrt(np.sum(sig2))
 
-		# masked
-		s_mskd = gcp.Snapshot(tab)
-		s_mskd.filter(id=(0,1), by_range={"id":False})
-		assert gcp.velocity_dispersion(s_mskd)[0] == np.sqrt(np.std([3.,9.]))
+		# 2D
+		sig2 = (np.std(s['vx'])**2., np.std(s['vy'])**2.)
+		assert gcp.velocity_dispersion(s, dim=2)[0] == np.sqrt(np.sum(sig2))
 
-		# projected
-		s.project = True
-		assert gcp.velocity_dispersion(s)[0] == np.sqrt(np.std([2.,5.,5.]))
+		# 2D + isotropy
+		sig2 = (np.std(s['vx'])**2., np.std(s['vy'])**2., np.std(s['vz'])**2.)
+		sig_to_test = gcp.velocity_dispersion(s, dim=2, isotropy=True)[0]
+		assert sig_to_test == (np.sqrt(np.sum(sig2) * 2. / 3.))
 
-		# los
-		assert gcp.velocity_dispersion(s, los=True)[0] == np.sqrt(np.std([1.,4.,4.]))
+		# 1D
+		sig2 = (np.std(s['vz'])**2.)
+		assert gcp.velocity_dispersion(s, dim=1)[0] == np.sqrt(np.sum(sig2))
+
+		# # masked
+		# s_mskd = gcp.Snapshot(tab)
+		# s_mskd.filter(id=(0,1), by_range={"id":False})
+		# assert gcp.velocity_dispersion(s_mskd)[0] == np.sqrt(np.std([3.,9.]))
 
 		# empty cluster
 		tab = Table(names=('x','y','z','vx','vy','vz'))

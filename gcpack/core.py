@@ -5,10 +5,10 @@ import warnings
 from gcpack.lin_regr import lregr
 
 __all__ = [
-	"get_local_density", "center_of_mass", "density_center", 
-	"lagr_rad", "density_radius", "velocity_dispersion", "density",
-	"mass_function", "mass_function_slope", "hm_relax_time"
-	]
+    "get_local_density", "center_of_mass", "density_center", 
+    "lagr_rad", "density_radius", "velocity_dispersion", "density",
+    "mass_function", "mass_function_slope", "hm_relax_time"
+    ]
 
 def get_local_density(snap, n_neighbors=6, masked=True):
     """
@@ -266,35 +266,46 @@ def density_radius(snap, masked=True, mass_weighted=False):
     den = np.sum(weigths)
     return num / den
 
-def velocity_dispersion(snap, los=False, masked=True):
+def velocity_dispersion(snap, dim=3, masked=True, isotropy=False):
     """
-    Return velocity dispersion.
+    Return velocity dispersion. 
+    For each dimension i:
+    sig_i = mean((v_i - mean(v_i))^2)
+    The combined velocity dispersion is:
+    sig = sqrt(sum(sig_i^2))
+    In case of isotropy, sig_i = const for each i.
 
     Parameters
     ----------
-    	snap : gcpack.Snapshot, 
+        snap : gcpack.Snapshot, 
             Represents the stellar cluster.
         masked : bool, optional
             If True, consider only masked snapshot for calculation.
-        los : bool, optional
-        	If True, return line-of-sight (along z-axis) velocity dispersion.
+        dim : int, optional
+            Velocity dispersion dimension. If isotropy is False,
+            1D vel. dispersion is calculated from the velocities along z,
+            while 2D vel. dispersion from the velocities along x a y.
+        isotropy: bool, optional
+            If True, the velocity dispersion is obtained by 
+            rescaling the 3D vel. dispersion by sqrt(dim/3).
 
     Return
     ------
-    	sig : float,
-    		Velocity dispersion
-    	dsig : float,
-			Standard error of sig
+        sig : float,
+            Velocity dispersion
+        dsig : float,
+            Standard error of sig
 
-	Notes
-	-----
-		If the snapshot is projected the velocity dispersion is calculated only
-		with components vx, vy
+    Notes
+    -----
+        If the snapshot is projected the velocity dispersion is calculated only
+        with components vx, vy
     """
     # check required quantities
+    assert (dim > 0 and dim <= 3), "Wrong dimensions for velocity dispersion!"
     snap._check_features('vz', function_id='Velocity dispersion')
-    if not los:
-    	snap._check_features('vx', 'vy', function_id='Velocity dispersion')
+    if dim > 1:
+        snap._check_features('vx', 'vy', function_id='Velocity dispersion')
 
     # get quantities as Table
     if masked:
@@ -302,40 +313,40 @@ def velocity_dispersion(snap, los=False, masked=True):
     else:
         tab = snap.original
 
-    # define velocity denpending on projection and line-of-sight
-    if los:
+    # define velocity denpending on dimension and isotropy parameters
+    if (dim == 1) and (not isotropy):
         V = tab['vz']
-    elif snap.project:
-    	V = np.array([tab['vx'], tab['vy']]).T
+    elif (dim == 2) and (not isotropy):
+        V = np.array([tab['vx'], tab['vy']]).T
     else:
         V = np.array([tab['vx'], tab['vy'], tab['vz']]).T
-    V2 = V * V
 
-    # calculate velocity dispersion 
-    try:
-    	sig = np.sqrt(np.std(np.sum(V2, axis=1)))
-    except:
-    	sig = np.sqrt(np.std(V2))
-    return sig, np.sqrt(sig**2. / (2.*len(tab)))
+    SIG = np.std(V, axis=0)  # velocity dispersion vector
+    sig = np.sqrt(np.sum(SIG * SIG))  # quadrature sum
+    # rescale 3D velocity dispersion in case of isotropy
+    if isotropy:
+        sig = sig * np.sqrt(dim / 3.)
+
+    return sig, np.sqrt(sig**2. / (2. * len(tab)))
 
 def density(snap, quantity=None, masked=True):
     """
     Return density (or surface density) of a specified quantity. 
 
-	Parameters
-	----------
-	    snap : gcpack.Snapshot, 
+    Parameters
+    ----------
+        snap : gcpack.Snapshot, 
             Represents the stellar cluster.
         quantity : str, optional
-        	Snapshot column used for the density calculation (e.g. 'm', 'l').
-        	If no quantity is provided a number count density is calculated.
+            Snapshot column used for the density calculation (e.g. 'm', 'l').
+            If no quantity is provided a number count density is calculated.
         masked : bool, optional
             If True, consider only masked snapshot for calculation.
 
-	Return
-	------
-		dens : float,
-			Density
+    Return
+    ------
+        dens : float,
+            Density
     """
     # define a mask of shape (snap.N, )
     if masked:
@@ -345,10 +356,10 @@ def density(snap, quantity=None, masked=True):
 
     # check required quantities
     if quantity is not None:
-    	snap._check_features(quantity, function_id='Density')
-    	numerator = np.sum(snap._data[quantity][mask])
+        snap._check_features(quantity, function_id='Density')
+        numerator = np.sum(snap._data[quantity][mask])
     else:
-    	numerator = len(snap._data[:][mask])
+        numerator = len(snap._data[:][mask])
 
     r = snap._data["_r"][mask]
     rmax = np.max(r)
@@ -364,20 +375,20 @@ def mass_function(snap, masked=True, **kwargs):
     Return the output of numpy.histogram(m, **kwargs), 
     where m are the stellar masses in the snapshot.
 
-	Parameters
-	----------
-	    snap : gcpack.Snapshot, 
+    Parameters
+    ----------
+        snap : gcpack.Snapshot, 
             Represents the stellar cluster.
         masked : bool, optional
             If True, consider only masked snapshot for calculation.
-		kwargs : numpy.histogram properties
+        kwargs : numpy.histogram properties
 
     Return
     ------
-    	hist : array
-			The values of the histogram.
-		bin_edges : array of dtype float
-			Return the bin edges (length(hist)+1).
+        hist : array
+            The values of the histogram.
+        bin_edges : array of dtype float
+            Return the bin edges (length(hist)+1).
 
     """
     # check required quantities
@@ -397,22 +408,22 @@ def mass_function_slope(snap, masked=True, nbins=10, plot=False):
 
     Parameters
     ----------
-    	snap : gcpack.Snapshot, 
+        snap : gcpack.Snapshot, 
             Represents the stellar cluster.
         masked : bool, optional
             If True, consider only masked snapshot for calculation.
         nbins : int, optional
-        	number of bins used for the Mass Function. Bins are chosen in order
-        	to have approximately the same numbe of stars (see Maiz & Ubeda 2005).
-		plot : bool, optional
-			Plot the linear fit
+            number of bins used for the Mass Function. Bins are chosen in order
+            to have approximately the same numbe of stars (see Maiz & Ubeda 2005).
+        plot : bool, optional
+            Plot the linear fit
 
-	Return
-	------
-		alpha : float, 
-			Mass Function slope
-		error : float,
-			Mass Function slope error from linear fit
+    Return
+    ------
+        alpha : float, 
+            Mass Function slope
+        error : float,
+            Mass Function slope error from linear fit
     """
     # get masses
     if masked:
@@ -461,22 +472,22 @@ def hm_relax_time(snap, masked=True):
     Return half-mass relaxation time (see eq.3 in Trenti+ 10)
 
     Parameters
-	----------
-	    snap : gcpack.Snapshot, 
+    ----------
+        snap : gcpack.Snapshot, 
             Represents the stellar cluster.
         masked : bool, optional
             If True, consider only masked snapshot for calculation.
 
     Return
     ------
-		trh : float, 
-			Half-mass relaxation time
+        trh : float, 
+            Half-mass relaxation time
     """
     # get number of stars
     if masked:
-    	N = len(snap[:])
+        N = len(snap[:])
     else:
-    	N = snap.N
+        N = snap.N
 
     # calculate half-mass radius
     rh = lagr_rad(snap, 50., masked=masked)
