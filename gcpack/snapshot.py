@@ -19,6 +19,10 @@ class Snapshot(object):
             Project cluster along z axis 
         center : list, optional
             Stellar system center
+        seed : int, optional
+            Used to randomize cluster's positions (and possibly velocities). 
+            ** Note that if seed is an int, 
+            the original coordinates are permanently changed!
 
     User's columns
     --------------
@@ -72,11 +76,13 @@ class Snapshot(object):
     """
 
     def __init__(self, data=None, names=None, dtype=None, 
-        project=False, center=(0,0,0)):
+        project=False, center=(0,0,0), seed=None):
         self._data = Table(data=data, names=names, dtype=dtype)
 
         self._check_features('x', 'y', 'z', function_id='Initialization')
         self._colnames_init = self._data.colnames
+        if seed:
+            self._randomize(seed)
         self.__project = project # initialize project
         self.__center = center # initialize center
         self.center = center # use center setter to initialize also _x, _y, _z, _r
@@ -284,3 +290,44 @@ class Snapshot(object):
 
     def __str__(self):
         return '\n'.join(self[:].pformat())
+
+    def _randomize(self, seed):
+        """ 
+        Set new x, y, z, vx, vy, vz by rotating the cluster about a random 
+        versor u by a random angle theta.
+
+        Parameter
+        ---------
+
+            seed: int,
+                Seed for the randomization.
+        """
+        np.random.seed(int(seed))  # set seed for randomization
+        # random versor
+        v = np.random.rand(3)
+        u = v/np.sqrt(np.sum(v*v))
+        th = np.random.random_sample() * 2 * np.pi  # random theta [0, 2pi)
+
+        # rotation matrix
+        R = np.array(
+             [[u[0]**2. + (1-u[0]**2.)*np.cos(th), u[0]*u[1]*(1-np.cos(th)) - u[2]*np.sin(th), u[0]*u[2]*(1-np.cos(th)) + u[1]*np.sin(th)],
+              [u[0]*u[1]*(1-np.cos(th)) + u[2]*np.sin(th), u[1]**2. + (1-u[1]**2.)*np.cos(th), u[1]*u[2]*(1-np.cos(th)) - u[0]*np.sin(th)],
+              [u[0]*u[2]*(1-np.cos(th)) - u[1]*np.sin(th), u[1]*u[2]*(1-np.cos(th)) + u[0]*np.sin(th), u[2]**2. + (1 - u[2]**2.)*np.cos(th)]])
+
+        Xi = np.array([self._data['x'], self._data['y'], self._data['z']])
+        Xf = np.dot(R, Xi) # shape: (3, 3) x (3, N) = (3, N)
+        self._data['x'] = Xf[0, :]
+        self._data['y'] = Xf[1, :]
+        self._data['z'] = Xf[2, :]
+        # try to transform velocities
+        try:
+            Vi = np.array([self._data['vx'], self._data['vy'], self._data['vz']])
+        except KeyError:  # velocities not provided!
+            return
+        Vf = np.dot(R, Vi) # shape: (3, 3) x (3, N) = (3, N)
+        self._data['vx'] = Vf[0, :]
+        self._data['vy'] = Vf[1, :]
+        self._data['vz'] = Vf[2, :]
+
+
+

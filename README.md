@@ -17,19 +17,19 @@ gcpack requires:
 ## Running
 
 The fundamental class of the module is Snapshot, which represents the stellar system.
-A Snapshot, may be projected along the z axis or centered in a particular position.
-Moreover, a subgroup of the original cluster may be selected.
+A Snapshot, may be randomized (i.e. a rotation of its coordinates is performed), 
+projected along the z axis or centered in a particular position.
+Moreover, a subgroup of the cluster may be selected.
 
 ```
 import gcpack as gcp
 import numpy as np
 
-# Create a (random) snapshot with 4 features, i.e. space coordinates and mass.
+# Create an unphysical snapshot with 4 features, i.e. space coordinates and mass.
 snap = gcp.Snapshot(data=np.random.rand(10, 4),
                     names=['x', 'y', 'z', 'm'],
                     project=False,
-                    center=[0, 0, 0]
-                    )
+                    center=[0, 0, 0])
 
 # mask only stars within a radius of 0.5
 snap.filter(_r=(0., 0.5), by_range={"_r": True})
