@@ -139,7 +139,7 @@ def density_center(snap, masked=True):
     Rhotot = np.sum(rho)
     return [np.dot(X[:,i], rho) / Rhotot for i in range(X.shape[1])]
 
-def lagr_rad(snap, percs, masked=True):
+def lagr_rad(snap, percs, masked=True, light=False):
     """
     Return Lagrangian radii specified by percs.
 
@@ -151,6 +151,8 @@ def lagr_rad(snap, percs, masked=True):
             Percentages used to calculate Lagrangian radii
         masked : bool, optional
             If True, consider only masked snapshot for calculation 
+        light : bool, optional
+            If True, return light-based Lagrangian radii
 
     Return 
     ------
@@ -158,7 +160,11 @@ def lagr_rad(snap, percs, masked=True):
             Lagrangian radii. The i-th element correspond to percs[i].
     """
     # check against required columns
-    snap._check_features('m', function_id='Lagrangian radii')
+    if light:
+        qnt = 'l'
+    else:
+        qnt = 'm'
+    snap._check_features(qnt, function_id='Lagrangian radii')
 
     # force percs to be a tuple
     try:
@@ -169,10 +175,10 @@ def lagr_rad(snap, percs, masked=True):
     # get radius and mass
     if masked:
         r = snap['_r']
-        m = snap['m']
+        q = snap[qnt]
     else:
         r = snap._data['_r']
-        m = snap._data['m']
+        q = snap._data[qnt]
 
     # dummy case : empty (or almost) cluster
     if len(r) <= 2: 
@@ -185,19 +191,19 @@ def lagr_rad(snap, percs, masked=True):
     # sort by radius
     so = np.argsort(r)
     r_sort = r[so]
-    m_sort = m[so]
+    q_sort = q[so]
 
     # use bisection method for Lagrangian radii calculations
-    M = np.sum(m_sort)
+    Q = np.sum(q_sort)
     lagr_radii = []
     for perc in percs:
-        Mperc = M * perc / 100. # fraction of total mass
+        Qperc = Q * perc / 100. # fraction of total mass
         def diff(n): 
             # calculate the difference between the global mass of the 
             # first n elements and Mperc
-            return np.sum(m_sort[:n+1]) - Mperc
+            return np.sum(q_sort[:n+1]) - Qperc
         a = 0
-        b = len(m_sort) - 1
+        b = len(q_sort) - 1
         Nguess = a + (b-a)/2
 
         # bisection method
