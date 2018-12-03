@@ -1,14 +1,17 @@
 import numpy as np
 from sklearn.neighbors import KDTree
+from scipy.optimize import least_squares
+from copy import deepcopy
 import warnings
 
-from gcpack.lin_regr import lregr
+from .lin_regr import lregr
 
 __all__ = [
-    "get_local_density", "center_of_mass", "density_center", 
+    "get_local_density", "center_of_mass", "density_center",
     "lagr_rad", "density_radius", "velocity_dispersion", "density",
-    "mass_function", "mass_function_slope", "hm_relax_time"
-    ]
+    "mass_function", "mass_function_slope", "hm_relax_time", "core_radius"
+]
+
 
 def get_local_density(snap, n_neighbors=6, masked=True):
     """
@@ -60,6 +63,7 @@ def get_local_density(snap, n_neighbors=6, masked=True):
 
     return Mass / Den
 
+
 def center_of_mass(snap, masked=True):
     """
     Return the center of mass of a snapshot.
@@ -94,6 +98,7 @@ def center_of_mass(snap, masked=True):
     # calculate center of mass
     Mtot = np.sum(tab['m'])
     return [np.dot(X[:,i], tab['m']) / Mtot for i in range(X.shape[1])]
+
 
 def density_center(snap, masked=True):
     """
@@ -138,6 +143,7 @@ def density_center(snap, masked=True):
     # calculate density center
     Rhotot = np.sum(rho)
     return [np.dot(X[:,i], rho) / Rhotot for i in range(X.shape[1])]
+
 
 def lagr_rad(snap, percs, masked=True, light=False):
     """
@@ -229,6 +235,7 @@ def lagr_rad(snap, percs, masked=True, light=False):
         return lagr_radii[0]
     return lagr_radii
 
+
 def density_radius(snap, masked=True, mass_weighted=False):
     """
     Return density radius.
@@ -271,6 +278,7 @@ def density_radius(snap, masked=True, mass_weighted=False):
     num = np.dot(snap._data['_r'][mask], weigths)
     den = np.sum(weigths)
     return num / den
+
 
 def velocity_dispersion(snap, dim=3, masked=True, isotropy=False):
     """
@@ -335,6 +343,7 @@ def velocity_dispersion(snap, dim=3, masked=True, isotropy=False):
 
     return sig, np.sqrt(sig**2. / (2. * len(tab)))
 
+
 def density(snap, quantity=None, masked=True):
     """
     Return density (or surface density) of a specified quantity. 
@@ -376,6 +385,7 @@ def density(snap, quantity=None, masked=True):
         denominator = 4./3. * np.pi * (rmax**3. - rmin**3.)
     return numerator / denominator
 
+
 def mass_function(snap, masked=True, **kwargs):
     """
     Return the output of numpy.histogram(m, **kwargs), 
@@ -407,6 +417,7 @@ def mass_function(snap, masked=True, **kwargs):
         m = snap.original['m']
 
     return np.histogram(m, **kwargs) 
+
 
 def mass_function_slope(snap, masked=True, nbins=10, plot=False):
     """
@@ -473,6 +484,7 @@ def mass_function_slope(snap, masked=True, nbins=10, plot=False):
         verbose=plot, plot=plot, labels=('log(mass)','log(dN/dm)'))
     return theta[1], theta_err[1]
 
+
 def hm_relax_time(snap, masked=True):
     """
     Return half-mass relaxation time (see eq.3 in Trenti+ 10)
@@ -499,3 +511,68 @@ def hm_relax_time(snap, masked=True):
     rh = lagr_rad(snap, 50., masked=masked)
 
     return 0.138 * N * rh**1.5 / np.log(0.11 * N)
+
+
+def core_radius(snap, masked=True, light=False):
+    """
+    Calculates the projected core radius as the radius at which
+    the surface brightness ('mu') profile drops to half of its central value.
+
+    Parameters
+    ----------
+        snap : Snapshot,
+            Represents the stellar cluster
+        masked : bool, optional
+            If True, consider only masked snapshot for calculation.
+        light : bool, optional
+            If True, returns light-based core radius using the luminosity 'l'
+            If False, returns mass-based core radius using the mass 'm'
+
+    Return
+    ------
+        core radius : float
+    """
+    s = deepcopy(snap)  # make local copy
+    if not s.project:  # make sure to project snapshot
+        s.project = True
+
+    if light:
+        s._check_features('l', function_id='Core radius')
+        s._data['_q'] = s._data['l']
+    else:
+        s._check_features('m', function_id='Core radius')
+        s._data['_q'] = s._data['m']
+
+    # get original mask
+    if masked:
+        mask = s._data['_mask']
+    else:
+        s.filter()
+        mask = s._data['_mask']
+
+    # calculate surface brightness profile...
+    # ... set default radial binning
+    radii = lagr_rad(s, np.linspace(1., 100., num=25))
+    r5 = radii[1]
+    radial_bins = np.array([(radii[i],radii[i+1]) for i in range(len(radii)-1)])
+    # ...calculate profile
+    dens, rad = [], []
+    for rad_bin in radial_bins:
+        s.filter(_r=rad_bin)  # radial mask
+        s._data['_mask'] = np.logical_and(s._data['_mask'], mask)  # refine mask
+        radii = s["_r"]
+        rmin, rmax = np.min(radii), np.max(radii)
+        area = np.pi * (rmax**2. - rmin**2.)
+        dens.append(np.sum(s['_q']) / area)
+        rad.append(np.mean(radii))
+    r, mu = np.array(rad), np.array(dens)
+
+    def king_res(a, x, y):  # residuals (see eq 14 King '62)
+        k, rc, C = a
+        return (k * (1/np.sqrt(1+(x/rc)**2.) - C)**2. - y)
+
+    k, Rc, C = least_squares(
+        king_res, [mu[0], r5, 0], loss='soft_l1', f_scale=0.1, args=(r, mu)
+    )['x']
+
+    return Rc
